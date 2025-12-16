@@ -1,0 +1,8 @@
+pandas
+numpy
+requests
+matplotlib
+tqdm
+pyyaml
+pytest
+streamlit
