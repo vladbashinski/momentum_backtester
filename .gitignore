@@ -1,0 +1,16 @@
+# PyCharm
+.idea/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Data (лучше не коммитить)
+data/raw/
+data/processed/
+
+# OS
+.DS_Store
+Thumbs.db
