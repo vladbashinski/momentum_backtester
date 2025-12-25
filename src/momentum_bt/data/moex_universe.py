@@ -4,47 +4,79 @@ import requests
 MOEX_ISS = "https://iss.moex.com/iss"
 
 
-def _fetch_json(url: str, params: dict | None = None) -> dict:
-    p = {"iss.meta": "off"}
-    if params:
-        p.update(params)
-    r = requests.get(url, params=p, timeout=30)
-    r.raise_for_status()
-    return r.json()
+def _get_table(js: dict) -> tuple[list[str], list[list]]:
+    """
+    Return (columns, data) from either 'analytics' or 'analytics_allowable'.
+    """
+    for key in ("analytics", "analytics_allowable"):
+        tbl = js.get(key)
+        if tbl and "columns" in tbl and "data" in tbl:
+            return tbl["columns"], tbl["data"]
+    return [], []
 
 
-def _extract(js: dict, table: str, col_name: str = "SECID") -> list[str]:
-    tbl = js.get(table)
-    if not tbl or "columns" not in tbl or "data" not in tbl:
-        return []
-    cols = [str(c).strip().upper() for c in tbl["columns"]]
-    data = tbl["data"]
-    if col_name.upper() not in cols:
-        return []
-    idx = cols.index(col_name.upper())
-    out = sorted({row[idx] for row in data if row and len(row) > idx and row[idx]})
-    return out
+def _find_secid_index(columns: list[str]) -> int | None:
+    cols_u = [str(c).strip().upper() for c in columns]
+    if "SECID" in cols_u:
+        return cols_u.index("SECID")
+    # fallback: column contains SECID
+    for i, c in enumerate(cols_u):
+        if "SECID" in c:
+            return i
+    return None
 
 
 def load_imoex_universe() -> list[str]:
     """
-    IMOEX constituents (index members) via MOEX ISS.
-
-    Tries several endpoints; returns list of tickers (SECID).
+    Load IMOEX constituents via MOEX ISS analytics endpoint WITH pagination.
+    MOEX ISS often returns only 20 rows per page by default -> we must iterate start=0,20,40...
     """
-    # 1) Most reliable: /index/boards/.../securities/IMOEX
-    # Some MOEX setups return constituents via 'analytics', others via 'securities'.
-    url1 = f"{MOEX_ISS}/engines/stock/markets/index/boards/SNDX/securities/IMOEX.json"
-    js1 = _fetch_json(url1, params={"iss.only": "securities"})
-    tickers = _extract(js1, "securities", "SECID")
-    if tickers:
-        return tickers
+    url = f"{MOEX_ISS}/statistics/engines/stock/markets/index/analytics/IMOEX.json"
 
-    # 2) Fallback: analytics endpoint
-    url2 = f"{MOEX_ISS}/statistics/engines/stock/markets/index/analytics/IMOEX.json"
-    js2 = _fetch_json(url2)
-    tickers = _extract(js2, "analytics", "SECID") or _extract(js2, "analytics_allowable", "SECID")
-    if tickers:
-        return tickers
+    start = 0
+    tickers: set[str] = set()
 
-    raise ValueError(f"Could not load IMOEX universe. Keys1={list(js1.keys())}, Keys2={list(js2.keys())}")
+    while True:
+        params = {
+            "iss.meta": "off",
+            "iss.only": "analytics,analytics_allowable",
+            "start": start,
+        }
+        r = requests.get(url, params=params, timeout=30)
+        r.raise_for_status()
+        js = r.json()
+
+        columns, data = _get_table(js)
+        if not columns or not data:
+            break
+
+        secid_idx = _find_secid_index(columns)
+        if secid_idx is None:
+            raise ValueError(f"SECID not found in columns: {columns}")
+
+        before = len(tickers)
+        for row in data:
+            if row and len(row) > secid_idx and row[secid_idx]:
+                tickers.add(str(row[secid_idx]).strip().upper())
+
+        # Pagination: MOEX returns fixed page size (often 20). Move by number of rows received.
+        got = len(data)
+        start += got
+
+        # stop condition: no new tickers or last page
+        if got == 0 or len(tickers) == before:
+            break
+
+        # safety guard (should never hit)
+        if start > 2000:
+            break
+
+    tickers = sorted(tickers)
+
+    # Filter out the index itself if it appears (sometimes IMOEX can appear as SECID)
+    tickers = [t for t in tickers if t != "IMOEX"]
+
+    if not tickers:
+        raise ValueError("IMOEX universe loaded but empty after pagination")
+
+    return tickers
