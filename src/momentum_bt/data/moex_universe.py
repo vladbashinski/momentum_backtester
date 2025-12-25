@@ -4,68 +4,47 @@ import requests
 MOEX_ISS = "https://iss.moex.com/iss"
 
 
-def _fetch_json(url: str) -> dict:
-    r = requests.get(url, params={"iss.meta": "off"}, timeout=30)
+def _fetch_json(url: str, params: dict | None = None) -> dict:
+    p = {"iss.meta": "off"}
+    if params:
+        p.update(params)
+    r = requests.get(url, params=p, timeout=30)
     r.raise_for_status()
     return r.json()
 
 
-def _extract_tickers_from_table(js: dict, table_key: str) -> list[str]:
-    """
-    Extract tickers from ISS table with unknown SECID column case/name.
-    """
-    tbl = js.get(table_key)
+def _extract(js: dict, table: str, col_name: str = "SECID") -> list[str]:
+    tbl = js.get(table)
     if not tbl or "columns" not in tbl or "data" not in tbl:
         return []
-
-    cols = tbl["columns"]
+    cols = [str(c).strip().upper() for c in tbl["columns"]]
     data = tbl["data"]
-
-    # Find SECID column robustly (SECID / secid / SecId / etc.)
-    secid_idx = None
-    for i, c in enumerate(cols):
-        if str(c).strip().upper() == "SECID":
-            secid_idx = i
-            break
-
-    # Extra fallback: sometimes it's something like "SECID" absent but "SECID" part exists
-    if secid_idx is None:
-        for i, c in enumerate(cols):
-            if "SECID" in str(c).strip().upper():
-                secid_idx = i
-                break
-
-    if secid_idx is None:
+    if col_name.upper() not in cols:
         return []
-
-    tickers = sorted({
-        row[secid_idx]
-        for row in data
-        if row and len(row) > secid_idx and row[secid_idx]
-    })
-    return tickers
+    idx = cols.index(col_name.upper())
+    out = sorted({row[idx] for row in data if row and len(row) > idx and row[idx]})
+    return out
 
 
 def load_imoex_universe() -> list[str]:
     """
-    Load IMOEX constituents via MOEX ISS.
-    Robust to schema variations (SECID casing & different table keys).
+    IMOEX constituents (index members) via MOEX ISS.
+
+    Tries several endpoints; returns list of tickers (SECID).
     """
-    # Primary endpoint used commonly for IMOEX analytics
-    url = f"{MOEX_ISS}/statistics/engines/stock/markets/index/analytics/IMOEX.json"
-    js = _fetch_json(url)
+    # 1) Most reliable: /index/boards/.../securities/IMOEX
+    # Some MOEX setups return constituents via 'analytics', others via 'securities'.
+    url1 = f"{MOEX_ISS}/engines/stock/markets/index/boards/SNDX/securities/IMOEX.json"
+    js1 = _fetch_json(url1, params={"iss.only": "securities"})
+    tickers = _extract(js1, "securities", "SECID")
+    if tickers:
+        return tickers
 
-    # Try likely tables
-    for key in ("analytics", "analytics_allowable"):
-        tickers = _extract_tickers_from_table(js, key)
-        if tickers:
-            return tickers
+    # 2) Fallback: analytics endpoint
+    url2 = f"{MOEX_ISS}/statistics/engines/stock/markets/index/analytics/IMOEX.json"
+    js2 = _fetch_json(url2)
+    tickers = _extract(js2, "analytics", "SECID") or _extract(js2, "analytics_allowable", "SECID")
+    if tickers:
+        return tickers
 
-    # If we got here: endpoint exists but SECID column name differs OR table differs
-    # Provide diagnostic hint
-    keys = list(js.keys())
-    raise ValueError(
-        f"Could not find SECID column in expected tables. "
-        f"Top-level keys: {keys}. "
-        f"Tables tried: analytics, analytics_allowable."
-    )
+    raise ValueError(f"Could not load IMOEX universe. Keys1={list(js1.keys())}, Keys2={list(js2.keys())}")
