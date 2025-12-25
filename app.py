@@ -74,7 +74,9 @@ with st.sidebar:
                     st.write(", ".join(tickers))
             except Exception as e:
                 tickers = []
-                st.error(f"Failed to load IMOEX universe: {e}")
+                st.error("Failed to load IMOEX universe")
+                st.exception(e)
+
         else:
             tickers_str = st.text_input(
                 "MOEX tickers (comma-separated)",
