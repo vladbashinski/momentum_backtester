@@ -54,12 +54,11 @@ with st.sidebar:
             ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT"],
             default=["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT"],
         )
-        moex_universe_mode = None
         tickers = []
         board = "TQBR"
     else:
         st.subheader("MOEX universe")
-        moex_universe_mode = st.radio(
+        universe_mode = st.radio(
             "Universe",
             ["IMOEX (index constituents)", "Custom tickers"],
             index=0,
@@ -67,8 +66,7 @@ with st.sidebar:
 
         board = st.text_input("Board", value="TQBR", help="Most liquid shares board is usually TQBR.")
 
-        if moex_universe_mode == "IMOEX (index constituents)":
-            # Show count + (optional) preview
+        if universe_mode == "IMOEX (index constituents)":
             try:
                 tickers = cached_imoex_universe()
                 st.caption(f"Loaded {len(tickers)} tickers from IMOEX.")
@@ -130,7 +128,6 @@ if run_btn:
             st.error("No price data returned. Check tickers/symbols and date range.")
             st.stop()
 
-        # Drop columns with too many NaNs (especially for wide universes)
         prices = prices.dropna(axis=1, how="all")
 
         if prices.shape[1] < max(2, int(top_n) + int(bottom_n)):
