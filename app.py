@@ -132,12 +132,18 @@ if run_btn:
 
         prices = prices.dropna(axis=1, how="all")
 
-        if prices.shape[1] < max(2, int(top_n) + int(bottom_n)):
-            st.error(
-                f"Not enough instruments with data: got {prices.shape[1]} columns, "
-                f"but need at least {int(top_n) + int(bottom_n)}."
+        n_assets = prices.shape[1]
+
+        # Auto-adjust Top/Bottom to available universe size
+        requested = int(top_n) + int(bottom_n)
+        if requested > n_assets:
+            st.warning(
+                f"Top N + Bottom N = {requested} is too large for {n_assets} instruments. "
+                f"Auto-adjusting."
             )
-            st.stop()
+            max_side = max(1, n_assets // 2)
+            top_n = min(int(top_n), max_side)
+            bottom_n = min(int(bottom_n), max_side)
 
         params = BacktestParams(
             lookback=int(lookback),
@@ -150,6 +156,22 @@ if run_btn:
 
         res = run_momentum_backtest(prices, params)
         stats = summary_stats(res["net_ret"], res["equity"], periods_per_year=periods_per_year)
+
+        # Show last rebalance winners / losers
+        if "weights" in res:
+            st.subheader("Current portfolio (last rebalance)")
+
+            last_w = res["weights"].iloc[-1].sort_values(ascending=False)
+
+            cL, cS = st.columns(2)
+
+            with cL:
+                st.write("Top (long)")
+                st.dataframe(last_w[last_w > 0].head(20), width="stretch")
+
+            with cS:
+                st.write("Bottom (short)")
+                st.dataframe(last_w[last_w < 0].tail(20), width="stretch")
 
     c1, c2 = st.columns([1, 2], vertical_alignment="top")
 
